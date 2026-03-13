@@ -5,8 +5,8 @@ setlocal enabledelayedexpansion
 mode con: cols=80 lines=40
 
 :: Set version info
-set "VERSION=2.0"
-set "BUILD_DATE=2025-04-18"
+set "VERSION=3.0"
+set "BUILD_DATE=2025-05-20"
 
 :: Define colors for messages
 set "INFO_COLOR=[92m"    :: Green
@@ -35,6 +35,11 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 echo Administrator privileges confirmed. >> "%LOG_FILE%"
+
+:: Handle command line arguments for scheduled tasks
+if /i "%~1"=="/daily" goto AUTO_DAILY
+if /i "%~1"=="/weekly" goto AUTO_WEEKLY
+if /i "%~1"=="/monthly" goto AUTO_MONTHLY
 
 :MENU
 cls
@@ -69,7 +74,11 @@ echo %WARN_COLOR%  [0] Exit Program%RESET_COLOR%
 echo.
 
 echo %INFO_COLOR%  Current System: %COMPUTERNAME% ^| User: %USERNAME% ^| Date: %DATE%%RESET_COLOR%
-echo %INFO_COLOR%  Last Cleaned: Checking...%RESET_COLOR%
+for /f "tokens=2 delims==" %%a in ('wmic os get FreePhysicalMemory /value') do set /a "FREE_RAM=%%a / 1024"
+for /f "tokens=2 delims==" %%a in ('wmic os get TotalVisibleMemorySize /value') do set /a "TOTAL_RAM=%%a / 1024"
+echo %INFO_COLOR%  Memory: %FREE_RAM% MB Free / %TOTAL_RAM% MB Total%RESET_COLOR%
+for /f "tokens=2 delims==" %%a in ('wmic logicaldisk where "DeviceID='C:'" get FreeSpace /value') do set "FREE_DISK=%%a"
+powershell -Command "$free = [math]::round(%FREE_DISK%/1GB, 2); Write-Host \"  Disk C: $free GB Free\" -ForegroundColor Green"
 echo.
 
 set /p choice=Enter your choice (0-14):
@@ -104,7 +113,7 @@ echo.
 echo Temporary files cleaning started at %date% %time% >> "%LOG_FILE%"
 
 :: Calculate initial disk space
-for /f "tokens=3" %%a in ('dir c:\ ^| findstr /C:"bytes free"') do set "SPACE_BEFORE=%%a"
+for /f "usebackq" %%a in (`powershell -Command "(Get-PSDrive C).Free"`) do set "SPACE_BEFORE=%%a"
 echo Initial free disk space: %SPACE_BEFORE% bytes >> "%LOG_FILE%"
 
 :: Create progress bar function
@@ -158,14 +167,12 @@ echo DNS Cache cleaned >> "%LOG_FILE%"
 call :SHOW_PROGRESS 100 "Temporary files cleaning completed!"
 
 :: Calculate space saved
-for /f "tokens=3" %%a in ('dir c:\ ^| findstr /C:"bytes free"') do set "SPACE_AFTER=%%a"
-set /a SPACE_SAVED=%SPACE_AFTER%-%SPACE_BEFORE%
+for /f "usebackq" %%a in (`powershell -Command "(Get-PSDrive C).Free"`) do set "SPACE_AFTER=%%a"
 echo Final free disk space: %SPACE_AFTER% bytes >> "%LOG_FILE%"
-echo Space saved: %SPACE_SAVED% bytes >> "%LOG_FILE%"
+powershell -Command "$saved = [long]('%SPACE_AFTER%') - [long]('%SPACE_BEFORE%'); Write-Host \"Space saved: $saved bytes\" -ForegroundColor Cyan; \"Space saved: $saved bytes\" >> '%LOG_FILE%'"
 
 echo.
 echo %SUCCESS_COLOR%Temporary files cleaning completed!%RESET_COLOR%
-echo %SUCCESS_COLOR%Space saved: %SPACE_SAVED% bytes%RESET_COLOR%
 echo.
 pause
 goto MENU
@@ -181,7 +188,7 @@ echo.
 echo Browser cache cleaning started at %date% %time% >> "%LOG_FILE%"
 
 :: Calculate initial disk space
-for /f "tokens=3" %%a in ('dir c:\ ^| findstr /C:"bytes free"') do set "SPACE_BEFORE=%%a"
+for /f "usebackq" %%a in (`powershell -Command "(Get-PSDrive C).Free"`) do set "SPACE_BEFORE=%%a"
 echo Initial free disk space: %SPACE_BEFORE% bytes >> "%LOG_FILE%"
 
 call :SHOW_PROGRESS 0 "Starting browser cache cleanup..."
@@ -282,14 +289,12 @@ echo Browser history cleaned >> "%LOG_FILE%"
 call :SHOW_PROGRESS 100 "Browser caches cleaning completed!"
 
 :: Calculate space saved
-for /f "tokens=3" %%a in ('dir c:\ ^| findstr /C:"bytes free"') do set "SPACE_AFTER=%%a"
-set /a SPACE_SAVED=%SPACE_AFTER%-%SPACE_BEFORE%
+for /f "usebackq" %%a in (`powershell -Command "(Get-PSDrive C).Free"`) do set "SPACE_AFTER=%%a"
 echo Final free disk space: %SPACE_AFTER% bytes >> "%LOG_FILE%"
-echo Space saved: %SPACE_SAVED% bytes >> "%LOG_FILE%"
+powershell -Command "$saved = [long]('%SPACE_AFTER%') - [long]('%SPACE_BEFORE%'); Write-Host \"Space saved: $saved bytes\" -ForegroundColor Cyan; \"Space saved: $saved bytes\" >> '%LOG_FILE%'"
 
 echo.
 echo %SUCCESS_COLOR%Browser caches cleaning completed!%RESET_COLOR%
-echo %SUCCESS_COLOR%Space saved: %SPACE_SAVED% bytes%RESET_COLOR%
 echo.
 pause
 goto MENU
@@ -356,9 +361,9 @@ goto MENU
 
 :CLEAN_ALL
 cls
-echo ===================================
-echo      RUNNING ALL CLEANING TASKS
-echo ===================================
+echo %INFO_COLOR%╔════════════════════════════════════════════════════════════════╗%RESET_COLOR%
+echo %INFO_COLOR%║                  RUNNING ALL CLEANING TASKS                  ║%RESET_COLOR%
+echo %INFO_COLOR%╚════════════════════════════════════════════════════════════════╝%RESET_COLOR%
 echo.
 
 echo This will run all cleaning operations.
@@ -366,14 +371,33 @@ echo Are you sure you want to continue? (Y/N)
 set /p confirm=
 if /i not "%confirm%"=="Y" goto MENU
 
+echo.
+echo %INFO_COLOR%[1/5] Cleaning temporary files...%RESET_COLOR%
 call :CLEAN_TEMP_SILENT
-call :CLEAN_BROWSERS_SILENT
-call :CLEAN_LOGS_SILENT
-call :DISK_CLEANUP_SILENT
-call :EMPTY_RECYCLE_SILENT
+echo %SUCCESS_COLOR%Done.%RESET_COLOR%
 
 echo.
-echo All cleaning operations completed!
+echo %INFO_COLOR%[2/5] Cleaning browser caches...%RESET_COLOR%
+call :CLEAN_BROWSERS_SILENT
+echo %SUCCESS_COLOR%Done.%RESET_COLOR%
+
+echo.
+echo %INFO_COLOR%[3/5] Cleaning Windows logs...%RESET_COLOR%
+call :CLEAN_LOGS_SILENT
+echo %SUCCESS_COLOR%Done.%RESET_COLOR%
+
+echo.
+echo %INFO_COLOR%[4/5] Running Disk Cleanup...%RESET_COLOR%
+call :DISK_CLEANUP_SILENT
+echo %SUCCESS_COLOR%Done.%RESET_COLOR%
+
+echo.
+echo %INFO_COLOR%[5/5] Emptying Recycle Bin...%RESET_COLOR%
+call :EMPTY_RECYCLE_SILENT
+echo %SUCCESS_COLOR%Done.%RESET_COLOR%
+
+echo.
+echo %SUCCESS_COLOR%All cleaning operations completed!%RESET_COLOR%
 echo.
 pause
 goto MENU
@@ -384,14 +408,14 @@ del /q /f /s "%TEMP%\*.*" 2>nul
 del /q /f /s "%SystemRoot%\Temp\*.*" 2>nul
 del /q /f /s "%SystemRoot%\Prefetch\*.*" 2>nul
 del /q /f /s "%SystemRoot%\SoftwareDistribution\Download\*.*" 2>nul
-return
+goto :eof
 
 :CLEAN_BROWSERS_SILENT
 echo Cleaning browser caches...
 del /q /f /s "%LOCALAPPDATA%\Google\Chrome\User Data\Default\Cache\*.*" 2>nul
 del /q /f /s "%LOCALAPPDATA%\Microsoft\Edge\User Data\Default\Cache\*.*" 2>nul
 del /q /f /s "%LOCALAPPDATA%\Mozilla\Firefox\Profiles\*\cache2\*.*" 2>nul
-return
+goto :eof
 
 :CLEAN_LOGS_SILENT
 echo Cleaning Windows logs...
@@ -399,17 +423,40 @@ for /f "tokens=*" %%G in ('wevtutil el') do (
     wevtutil cl "%%G" 2>nul
 )
 del /q /f /s "%SystemRoot%\Logs\CBS\*.*" 2>nul
-return
+goto :eof
 
 :DISK_CLEANUP_SILENT
 echo Running Disk Cleanup...
 start /wait cleanmgr /sagerun:1
-return
+goto :eof
 
 :EMPTY_RECYCLE_SILENT
 echo Emptying Recycle Bin...
 rd /s /q C:\$Recycle.Bin 2>nul
-return
+goto :eof
+
+:AUTO_DAILY
+echo Running scheduled daily cleaning... >> "%LOG_FILE%"
+call :CLEAN_TEMP_SILENT
+echo Scheduled daily cleaning completed. >> "%LOG_FILE%"
+exit /b 0
+
+:AUTO_WEEKLY
+echo Running scheduled weekly cleaning... >> "%LOG_FILE%"
+call :CLEAN_TEMP_SILENT
+call :CLEAN_BROWSERS_SILENT
+echo Scheduled weekly cleaning completed. >> "%LOG_FILE%"
+exit /b 0
+
+:AUTO_MONTHLY
+echo Running scheduled monthly cleaning... >> "%LOG_FILE%"
+call :CLEAN_TEMP_SILENT
+call :CLEAN_BROWSERS_SILENT
+call :CLEAN_LOGS_SILENT
+call :DISK_CLEANUP_SILENT
+call :EMPTY_RECYCLE_SILENT
+echo Scheduled monthly cleaning completed. >> "%LOG_FILE%"
+exit /b 0
 
 :ADVANCED_CLEANING
 cls
@@ -561,33 +608,17 @@ echo %INFO_COLOR%Analyzing disk space usage...%RESET_COLOR%
 echo.
 
 echo %INFO_COLOR%Drive Information:%RESET_COLOR%
-wmic logicaldisk get deviceid, volumename, description, freespace, size
+wmic logicaldisk get deviceid, volumename, freespace, size
 
 echo.
 echo %INFO_COLOR%Largest folders in C:\Users\%USERNAME% (Top 10):%RESET_COLOR%
 echo This may take a few minutes...
-
-for /f "tokens=*" %%a in ('dir C:\Users\%USERNAME% /s /b /a:d') do (
-    set "folder=%%a"
-    if exist "!folder!" (
-        for /f "tokens=3" %%b in ('dir "!folder!" /a /-c 2^>nul ^| findstr /C:"File(s)"') do (
-            echo %%b bytes - !folder!
-        )
-    )
-)
+powershell -Command "Get-ChildItem -Path 'C:\Users\$env:USERNAME' -Directory -ErrorAction SilentlyContinue | Select-Object Name, @{Name='Size(GB)';Expression={ (Get-ChildItem -Path $_.FullName -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum / 1GB -as [int] }} | Sort-Object 'Size(GB)' -Descending | Select-Object -First 10 | Format-Table -AutoSize"
 
 echo.
 echo %INFO_COLOR%Largest files in C:\Users\%USERNAME% (Top 10):%RESET_COLOR%
 echo This may take a few minutes...
-
-for /f "tokens=*" %%a in ('dir C:\Users\%USERNAME% /s /b /a:-d') do (
-    set "file=%%a"
-    if exist "!file!" (
-        for /f "tokens=3" %%b in ('dir "!file!" /a /-c 2^>nul ^| findstr /C:"1 File(s)"') do (
-            echo %%b bytes - !file!
-        )
-    )
-)
+powershell -Command "Get-ChildItem -Path 'C:\Users\$env:USERNAME' -File -Recurse -ErrorAction SilentlyContinue | Sort-Object Length -Descending | Select-Object Name, @{Name='Size(MB)';Expression={ [math]::round($_.Length / 1MB, 2) }}, FullName -First 10 | Format-Table -AutoSize"
 
 echo.
 echo %SUCCESS_COLOR%Disk space analysis completed!%RESET_COLOR%
@@ -639,67 +670,22 @@ echo.
 echo Memory optimization started at %date% %time% >> "%LOG_FILE%"
 
 echo %INFO_COLOR%Current memory usage:%RESET_COLOR%
-for /f "skip=1" %%p in ('wmic os get FreePhysicalMemory') do (
-    set "freemem=%%p"
-    goto :freememfound
-)
-:freememfound
-for /f "skip=1" %%p in ('wmic os get TotalVisibleMemorySize') do (
-    set "totalmem=%%p"
-    goto :totalmemfound
-)
-:totalmemfound
-
-set /a usedmem=%totalmem%-%freemem%
-set /a usedmempercent=(%usedmem%*100)/%totalmem%
-set /a freemempercent=100-%usedmempercent%
-
-echo Total Memory: %totalmem% KB
-echo Used Memory: %usedmem% KB (%usedmempercent%%%)
-echo Free Memory: %freemem% KB (%freemempercent%%%)
+powershell -Command "$os = Get-WmiObject Win32_OperatingSystem; $total = [math]::round($os.TotalVisibleMemorySize / 1MB, 2); $free = [math]::round($os.FreePhysicalMemory / 1MB, 2); $used = $total - $free; Write-Host \"Total Memory: $total GB\"; Write-Host \"Used Memory: $used GB\"; Write-Host \"Free Memory: $free GB\""
 
 echo.
 echo %INFO_COLOR%Optimizing memory...%RESET_COLOR%
 
 echo %INFO_COLOR%Clearing system working set...%RESET_COLOR%
-powershell -command "[System.Diagnostics.Process]::GetProcesses() | ForEach-Object { $_.MinWorkingSet = [System.IntPtr]::Zero }"
-
-echo %INFO_COLOR%Clearing file system cache...%RESET_COLOR%
-echo.
-echo %WARN_COLOR%This operation requires administrator privileges.%RESET_COLOR%
-echo %WARN_COLOR%It will temporarily freeze your system for a few seconds.%RESET_COLOR%
-echo %WARN_COLOR%Do you want to continue? (Y/N)%RESET_COLOR%
-set /p clear_cache=
-if /i "%clear_cache%"=="Y" (
-    echo Clearing file system cache...
-    echo.
-    powershell -command "Write-Host 'Clearing system cache...'; [System.Reflection.Assembly]::LoadWithPartialName('System.Runtime.InteropServices'); $gch = [System.Runtime.InteropServices.GCHandle]::Alloc((New-Object byte[]([Math]::Max([Environment]::SystemPageSize, 4096))), 'Pinned'); try { [System.Runtime.InteropServices.Marshal]::FreeHGlobal($gch.AddrOfPinnedObject()) } finally { $gch.Free() }"
-    echo File system cache cleared >> "%LOG_FILE%"
-)
+powershell -command "[System.Diagnostics.Process]::GetProcesses() | ForEach-Object { try { $_.MinWorkingSet = [System.IntPtr]::Zero } catch {} }" 2>nul
 
 echo.
-echo %INFO_COLOR%Current memory usage after optimization:%RESET_COLOR%
-for /f "skip=1" %%p in ('wmic os get FreePhysicalMemory') do (
-    set "freemem2=%%p"
-    goto :freemem2found
-)
-:freemem2found
-
-set /a usedmem2=%totalmem%-%freemem2%
-set /a usedmempercent2=(%usedmem2%*100)/%totalmem%
-set /a freemempercent2=100-%usedmempercent2%
-set /a memoryfreed=%freemem2%-%freemem%
-
-echo Total Memory: %totalmem% KB
-echo Used Memory: %usedmem2% KB (%usedmempercent2%%%)
-echo Free Memory: %freemem2% KB (%freemempercent2%%%)
-echo Memory Freed: %memoryfreed% KB
-
-echo Memory optimization completed >> "%LOG_FILE%"
-echo Memory freed: %memoryfreed% KB >> "%LOG_FILE%"
+echo %INFO_COLOR%Clearing Standby List (RAM Cache)...%RESET_COLOR%
+echo %WARN_COLOR%Using PowerShell to request system-wide memory release...%RESET_COLOR%
+powershell -Command "$code = '[DllImport(\"psapi.dll\")] public static extern int EmptyWorkingSet(IntPtr hwProc);'; $type = Add-Type -MemberDefinition $code -Name 'MemoryTools' -Namespace 'Utils' -PassThru; Get-Process | ForEach-Object { $type::EmptyWorkingSet($_.Handle) } 2>$null"
 
 echo.
 echo %SUCCESS_COLOR%Memory optimization completed!%RESET_COLOR%
+echo Memory optimization completed >> "%LOG_FILE%"
 echo.
 pause
 goto MENU
@@ -876,6 +862,13 @@ set progressbar=
 for /l %%i in (1,1,%filled%) do set progressbar=!progressbar!█
 for /l %%i in (1,1,%empty%) do set progressbar=!progressbar!░
 
+:: Use cls to prevent scrolling when updating progress bar
+cls
+echo %INFO_COLOR%
+echo  ╔═══════════════════════════════════════════════════════════════════════╗
+echo  ║                  CLEANING IN PROGRESS...                                ║
+echo  ╚═══════════════════════════════════════════════════════════════════════╝%RESET_COLOR%
+echo.
 echo %INFO_COLOR%[!progressbar!] %progress%%%  %message%%RESET_COLOR%
 endlocal
 goto :eof
